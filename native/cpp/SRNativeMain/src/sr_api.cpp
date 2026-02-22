@@ -2,6 +2,7 @@
 #include <mutex>
 #include <vector>
 #include <cstring>
+#include <cstdio>
 
 #ifdef ON_WIN64
 #include <windows.h>
@@ -50,22 +51,57 @@ SR_API SRReturnCode srCreateUpscaleContext(
     SRUpscaleProvider *provider,
     const SRCreateUpscaleContextDesc *desc)
 {
+    fprintf(stderr, "[SRNative] srCreateUpscaleContext: Enter. provider=%p providerId=0x%llx\n",
+            (void*)provider, provider ? (unsigned long long)provider->providerId : 0ULL);
+    fflush(stderr);
+
     if (!outContext || !provider || !desc)
     {
+        fprintf(stderr, "[SRNative] srCreateUpscaleContext: NULL pointer error. outContext=%p provider=%p desc=%p\n",
+                (void*)outContext, (void*)provider, (void*)desc);
+        fflush(stderr);
+        return (SRReturnCode)SR_RETURN_CODE_NULL_POINTER;
+    }
+    if (!provider->callbacks.pCreate)
+    {
+        fprintf(stderr, "[SRNative] srCreateUpscaleContext: ERROR pCreate callback is NULL\n");
+        fflush(stderr);
         return (SRReturnCode)SR_RETURN_CODE_NULL_POINTER;
     }
     outContext->callbacks = provider->callbacks;
-    return provider->callbacks.pCreate(outContext, desc);
+    fprintf(stderr, "[SRNative] srCreateUpscaleContext: Calling provider->callbacks.pCreate (pCreate=%p)...\n",
+            (void*)provider->callbacks.pCreate);
+    fflush(stderr);
+
+    SRReturnCode rc = provider->callbacks.pCreate(outContext, desc);
+
+    fprintf(stderr, "[SRNative] srCreateUpscaleContext: pCreate returned %d\n", (int)rc);
+    fflush(stderr);
+    return rc;
 }
 
 SR_API SRReturnCode srInitUpscaleContext(
     SRUpscaleContext *context)
 {
+    fprintf(stderr, "[SRNative] srInitUpscaleContext: Enter. context=%p\n", (void*)context);
+    fflush(stderr);
+
     if (!context || !context->callbacks.pInit)
     {
+        fprintf(stderr, "[SRNative] srInitUpscaleContext: NULL pointer error. context=%p pInit=%p\n",
+                (void*)context, context ? (void*)context->callbacks.pInit : nullptr);
+        fflush(stderr);
         return (SRReturnCode)SR_RETURN_CODE_NULL_POINTER;
     }
-    return context->callbacks.pInit(context);
+    fprintf(stderr, "[SRNative] srInitUpscaleContext: Calling context->callbacks.pInit (pInit=%p)...\n",
+            (void*)context->callbacks.pInit);
+    fflush(stderr);
+
+    SRReturnCode rc = context->callbacks.pInit(context);
+
+    fprintf(stderr, "[SRNative] srInitUpscaleContext: pInit returned %d\n", (int)rc);
+    fflush(stderr);
+    return rc;
 }
 
 SR_API SRReturnCode srDestroyUpscaleContext(SRUpscaleContext *context)

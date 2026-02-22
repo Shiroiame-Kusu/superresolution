@@ -323,6 +323,11 @@ public class SuperResolutionConfig {
             return;
         }
 
+        SuperResolution.LOGGER.info("[setUpscaleAlgorithm] Switching from '{}' to '{}'. Thread={}",
+                currentAlgo != null ? currentAlgo.getDisplayName() : "null",
+                newAlgo.getDisplayName(),
+                Thread.currentThread().getName());
+
         AbstractAlgorithm oldAlgorithmInstance = SuperResolution.currentAlgorithm;
         AlgorithmDescription<?> oldDescription = SuperResolution.algorithmDescription;
 
@@ -330,18 +335,23 @@ public class SuperResolutionConfig {
             UPSCALE_ALGO.set(newAlgo.codeName);
             SuperResolution.algorithmDescription = newAlgo;
 
+            SuperResolution.LOGGER.info("[setUpscaleAlgorithm] Calling createAlgorithm()...");
             if (!SuperResolution.createAlgorithm()) {
                 throw new RuntimeException("创建算法失败");
             }
+            SuperResolution.LOGGER.info("[setUpscaleAlgorithm] createAlgorithm() succeeded.");
 
             if (oldAlgorithmInstance != null) {
                 try {
+                    SuperResolution.LOGGER.info("[setUpscaleAlgorithm] Destroying old algorithm instance...");
                     oldAlgorithmInstance.destroy();
+                    SuperResolution.LOGGER.info("[setUpscaleAlgorithm] Old algorithm destroyed.");
                 } catch (Exception e) {
                     SuperResolution.LOGGER.error("销毁旧算法时出错", e);
                 }
             }
 
+            SuperResolution.LOGGER.info("[setUpscaleAlgorithm] Switch complete.");
         } catch (Exception e) {
             SuperResolution.LOGGER.error("切换到算法 {} 失败，尝试回滚", newAlgo.displayName, e);
 

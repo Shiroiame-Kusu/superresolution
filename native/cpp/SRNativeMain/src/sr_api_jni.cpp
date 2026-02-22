@@ -4,6 +4,7 @@
 #include "utils.h"
 #include <string>
 #include <iostream>
+#include <cstdio>
 #include "sr/sr_modules.h"
 #include <codecvt>
 #include <locale>
@@ -187,6 +188,10 @@ extern "C"
         jlong extraParamsPtr,
         jint flags)
     {
+        fprintf(stderr, "[SRNative-JNI] NsrCreateUpscaleContext: Enter. renderApiType=%d provider=%p upscaledSize=%dx%d renderSize=%dx%d flags=0x%x\n",
+                renderApiType, (void*)provider, upscaledSizeX, upscaledSizeY, renderSizeX, renderSizeY, flags);
+        fflush(stderr);
+
         g_envForCallback = env;
 
         SRCreateUpscaleContextDesc desc = {};
@@ -258,19 +263,23 @@ extern "C"
         }
 
         SRUpscaleContext *context = new SRUpscaleContext();
+        fprintf(stderr, "[SRNative-JNI] NsrCreateUpscaleContext: Calling srCreateUpscaleContext...\n"); fflush(stderr);
         SRReturnCode rc = srCreateUpscaleContext(
             context,
             reinterpret_cast<SRUpscaleProvider *>(provider),
             &desc);
+        fprintf(stderr, "[SRNative-JNI] NsrCreateUpscaleContext: srCreateUpscaleContext returned %d\n", (int)rc); fflush(stderr);
 
         if (rc != SR_RETURN_CODE_OK)
         {
+            fprintf(stderr, "[SRNative-JNI] NsrCreateUpscaleContext: FAILED, deleting context\n"); fflush(stderr);
             delete context;
             return rc;
         }
         jclass cls = env->GetObjectClass(outContextObj);
         jfieldID nativePtrField = env->GetFieldID(cls, "nativePtr", "J");
         env->SetLongField(outContextObj, nativePtrField, reinterpret_cast<jlong>(context));
+        fprintf(stderr, "[SRNative-JNI] NsrCreateUpscaleContext: Exit OK. contextPtr=%p\n", (void*)context); fflush(stderr);
 
         return rc;
     }
@@ -528,14 +537,23 @@ extern "C"
         return srLoadUpscaleProvidersFromLibrary(LibPath, funcNameStr, countNameStr, sr_message_callback_bridge);
     }
 
-    JNIEXPORT jint JNICALL Java_io_homo_superresolution_core_SuperResolutionNative_NsrInitUpscaleContext(JNIEnv *, jclass, jlong contextPtr)
+    JNIEXPORT jint JNICALL Java_io_homo_superresolution_core_SuperResolutionNative_NsrInitUpscaleContext(JNIEnv *env, jclass, jlong contextPtr)
     {
+        g_envForCallback = env;
+        fprintf(stderr, "[SRNative-JNI] NsrInitUpscaleContext: Enter. contextPtr=%p\n", (void*)contextPtr);
+        fflush(stderr);
+
         auto context = reinterpret_cast<SRUpscaleContext *>(contextPtr);
         if (!context)
         {
+            fprintf(stderr, "[SRNative-JNI] NsrInitUpscaleContext: ERROR context is NULL\n");
+            fflush(stderr);
             return SR_RETURN_CODE_NULL_POINTER;
         }
-        return srInitUpscaleContext(context);
+        SRReturnCode rc = srInitUpscaleContext(context);
+        fprintf(stderr, "[SRNative-JNI] NsrInitUpscaleContext: srInitUpscaleContext returned %d\n", (int)rc);
+        fflush(stderr);
+        return rc;
     }
 
 

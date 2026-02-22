@@ -61,6 +61,7 @@ public class FfxFSR extends AbstractAlgorithm {
     private final VulkanCommandBufferRing commandBufferRing = new VulkanCommandBufferRing(
             INITIAL_COMMAND_BUFFER_RING_SIZE
     );
+    private boolean firstDispatchLogged = false;
     private SRUpscaleContext context;
     private GlImportableTexture2D inputColorGlTexture;
     private VulkanTexture inputColorVkTexture;
@@ -77,29 +78,55 @@ public class FfxFSR extends AbstractAlgorithm {
 
     public void updateFsr() {
         if (NativeLibManager.LIB_SUPER_RESOLUTION_FSR == null) {
+            SuperResolution.LOGGER.warn("[FfxFSR::updateFsr] LIB_SUPER_RESOLUTION_FSR is null, skipping");
             return;
         }
         Path lib = NativeLibManager.LIB_SUPER_RESOLUTION_FSR.getTargetPath(SuperResolutionConstants.NATIVE_LIBRARIES_DIR.getPath());
         if (!(lib.toFile().isFile() && lib.toFile().canRead())) {
+            SuperResolution.LOGGER.warn("[FfxFSR::updateFsr] FSR library not found or not readable: {}", lib.toAbsolutePath());
             return;
         }
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] Begin. Thread={} lib={}", Thread.currentThread().getName(), lib.toAbsolutePath());
+
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] Calling vkQueueWaitIdle...");
         vkQueueWaitIdle(((VulkanDevice) RenderSystems.vulkan().device()).getMainQueue().getQueue());
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] vkQueueWaitIdle returned.");
 
         if (context != null) {
             if (context.nativePtr > 0) {
+                SuperResolution.LOGGER.info("[FfxFSR::updateFsr] Destroying old context ptr={}", context.nativePtr);
                 SuperResolutionNativeAPI.srDestroyUpscaleContext(context);
+                SuperResolution.LOGGER.info("[FfxFSR::updateFsr] Old context destroyed.");
             }
         }
 
-        SuperResolutionNativeAPI.srLoadUpscaleProvidersFromLibrary(
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] Loading FSR providers from library...");
+        SRReturnCode loadCode = SuperResolutionNativeAPI.srLoadUpscaleProvidersFromLibrary(
                 lib.toAbsolutePath().toString(),
                 "srGetFfxFSRUpscaleProviders",
                 "srGetFfxFSRUpscaleProvidersCount"
         );
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] srLoadUpscaleProvidersFromLibrary returned: {}", loadCode);
+
         SRUpscaleProvider provider = new SRUpscaleProvider(0);
-        SuperResolutionNativeAPI.srGetUpscaleProvider(provider, 0x8000003);
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] Getting FSR3 provider (0x8000003)...");
+        SRReturnCode getProviderCode = SuperResolutionNativeAPI.srGetUpscaleProvider(provider, 0x8000003);
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] srGetUpscaleProvider returned: {} providerPtr={}", getProviderCode, provider.nativePtr);
+
+        if (getProviderCode != SRReturnCode.OK || provider.nativePtr == 0) {
+            SuperResolution.LOGGER.error("[FfxFSR::updateFsr] Failed to get FSR3 provider! code={} ptr={}", getProviderCode, provider.nativePtr);
+            return;
+        }
+
         this.context = new SRUpscaleContext(0);
         VulkanDevice vulkanDevice = (VulkanDevice) RenderSystems.vulkan().device();
+
+        long vkDeviceProcAddr = vulkanDevice.getVkDevice().getCapabilities().vkGetDeviceProcAddr;
+        long vkGetInstanceProcAddr = VkReflectionHelper.getVkGetInstanceProcAddr();
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] Preparing SRCreateUpscaleContextDesc: screenSize={}x{} renderSize={}x{} vkDeviceProcAddr=0x{} vkGetInstanceProcAddr=0x{}",
+                RenderHandlerManager.getScreenWidth(), RenderHandlerManager.getScreenHeight(),
+                RenderHandlerManager.getRenderWidth(), RenderHandlerManager.getRenderHeight(),
+                Long.toHexString(vkDeviceProcAddr), Long.toHexString(vkGetInstanceProcAddr));
 
         SRCreateUpscaleContextDesc upscaleContextDesc = SRCreateUpscaleContextDesc.createVulkan(
                 new SRVulkanDeviceInfo(
@@ -107,8 +134,8 @@ public class FfxFSR extends AbstractAlgorithm {
                         vulkanDevice.getPhysicalDevice(),
                         vulkanDevice.getVkDevice(),
                         null,
-                        vulkanDevice.getVkDevice().getCapabilities().vkGetDeviceProcAddr,
-                        VkReflectionHelper.getVkGetInstanceProcAddr()
+                        vkDeviceProcAddr,
+                        vkGetInstanceProcAddr
                 ),
                 new Vector2i(RenderHandlerManager.getScreenWidth(), RenderHandlerManager.getScreenHeight()),
                 new Vector2i(RenderHandlerManager.getRenderWidth(), RenderHandlerManager.getRenderHeight()),
@@ -118,18 +145,35 @@ public class FfxFSR extends AbstractAlgorithm {
                         SRUpscaleContextCreateFlags.ENABLE_DEBUG
                 )
         );
+
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] Calling srCreateUpscaleContext...");
+        long createStartNs = System.nanoTime();
         SRReturnCode code = SuperResolutionNativeAPI.srCreateUpscaleContext(
                 context,
                 provider,
                 upscaleContextDesc
         );
+        long createElapsedMs = (System.nanoTime() - createStartNs) / 1_000_000;
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] srCreateUpscaleContext returned: {} contextPtr={} (took {}ms)", code, context.nativePtr, createElapsedMs);
+
+        if (code != SRReturnCode.OK) {
+            SuperResolution.LOGGER.error("[FfxFSR::updateFsr] srCreateUpscaleContext FAILED with code={}", code);
+            return;
+        }
+
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] Calling srInitUpscaleContext...");
+        long initStartNs = System.nanoTime();
         SRReturnCode code0 = SuperResolutionNativeAPI.srInitUpscaleContext(
                 context
         );
-        SuperResolution.LOGGER.info(String.valueOf(code.value));
-        SuperResolution.LOGGER.info(String.valueOf(code0.value));
-        SuperResolution.LOGGER.info(String.valueOf(context.nativePtr));
-        SuperResolution.LOGGER.info(String.valueOf(provider.nativePtr));
+        long initElapsedMs = (System.nanoTime() - initStartNs) / 1_000_000;
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] srInitUpscaleContext returned: {} (took {}ms)", code0, initElapsedMs);
+
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] 'srCreateUpscaleContext' return code: {}", code);
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] 'srInitUpscaleContext' return code: {}", code0);
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] 'SRUpscaleContext' pointer: {}", context.nativePtr);
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] 'SRUpscaleProvider' pointer: {}", provider.nativePtr);
+        SuperResolution.LOGGER.info("[FfxFSR::updateFsr] End.");
     }
 
     protected void destroySharedTexture() {
@@ -246,12 +290,17 @@ public class FfxFSR extends AbstractAlgorithm {
 
     @Override
     public void init() {
+        SuperResolution.LOGGER.info("[FfxFSR::init] Begin. Thread={}", Thread.currentThread().getName());
+        SuperResolution.LOGGER.info("[FfxFSR::init] Creating shared textures...");
         createSharedTexture();
+        SuperResolution.LOGGER.info("[FfxFSR::init] Shared textures created. Creating sync semaphores...");
         syncSemaphore = VkGlInteropSemaphore.create((VulkanDevice) RenderSystems.vulkan().device());
         syncVkSemaphore = VkGlInteropSemaphore.create((VulkanDevice) RenderSystems.vulkan().device());
+        SuperResolution.LOGGER.info("[FfxFSR::init] Sync semaphores created. Calling resize()...");
         resize(RenderHandlerManager.getScreenWidth(),
                 RenderHandlerManager.getScreenHeight()
         );
+        SuperResolution.LOGGER.info("[FfxFSR::init] End.");
     }
 
     @Override
@@ -260,6 +309,11 @@ public class FfxFSR extends AbstractAlgorithm {
 
         if (context == null || context.nativePtr < 1) {
             return false;
+        }
+        if (!firstDispatchLogged) {
+            SuperResolution.LOGGER.info("[FfxFSR::dispatch] First dispatch call. contextPtr={} Thread={}",
+                    context.nativePtr, Thread.currentThread().getName());
+            firstDispatchLogged = true;
         }
         InteropResourcesConverter.flipY(
                 dispatchResource.resources().colorTexture(),
@@ -369,12 +423,19 @@ public class FfxFSR extends AbstractAlgorithm {
 
     @Override
     public void resize(int width, int height) {
+        SuperResolution.LOGGER.info("[FfxFSR::resize] Begin. width={} height={}", width, height);
+        SuperResolution.LOGGER.info("[FfxFSR::resize] Calling vkQueueWaitIdle...");
         vkQueueWaitIdle(((VulkanDevice) RenderSystems.vulkan().device()).getMainQueue().getQueue());
+        SuperResolution.LOGGER.info("[FfxFSR::resize] vkQueueWaitIdle returned. Destroying command buffer ring...");
 
         commandBufferRing.destroy();
+        SuperResolution.LOGGER.info("[FfxFSR::resize] Command buffer ring destroyed. Calling updateFsr()...");
         updateFsr();
+        SuperResolution.LOGGER.info("[FfxFSR::resize] updateFsr() returned. Destroying shared textures...");
         destroySharedTexture();
+        SuperResolution.LOGGER.info("[FfxFSR::resize] Shared textures destroyed. Creating new shared textures...");
         createSharedTexture();
+        SuperResolution.LOGGER.info("[FfxFSR::resize] End.");
     }
 
     @Override

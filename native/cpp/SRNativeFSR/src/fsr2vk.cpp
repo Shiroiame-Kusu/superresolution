@@ -5,6 +5,7 @@
 #include "FidelityFX/host/ffx_fsr2.h"
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 #include "sr/fsr/sr_provider.h"
 
 struct SRFsr2PrivateData
@@ -21,8 +22,14 @@ extern "C"
 
     SR_API SRReturnCode srFfxFsr2VkInitUpscaleContext(SRUpscaleContext *context)
     {
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkInitUpscaleContext: Enter\n"); fflush(stderr);
         const SRCreateUpscaleContextDesc *desc = &context->desc;
         SRFsr2PrivateData *privateData = (SRFsr2PrivateData *)context->userContext;
+
+        if (!privateData) {
+            fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkInitUpscaleContext: ERROR privateData is NULL\n"); fflush(stderr);
+            return (SRReturnCode)SR_RETURN_CODE_ERROR;
+        }
 
         FfxFsr2ContextDescription fsrContexDesc = {};
         fsrContexDesc.flags = 0;
@@ -47,7 +54,14 @@ extern "C"
         fsrContexDesc.displaySize = {desc->upscaledSize.x, desc->upscaledSize.y};
         fsrContexDesc.fpMessage = desc->messageCallback ? reinterpret_cast<FfxFsr2Message>(desc->messageCallback) : nullptr;
 
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkInitUpscaleContext: flags=0x%x maxRenderSize=%ux%u displaySize=%ux%u\n",
+                fsrContexDesc.flags, desc->renderSize.x, desc->renderSize.y, desc->upscaledSize.x, desc->upscaledSize.y);
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkInitUpscaleContext: Calling ffxFsr2ContextCreate...\n"); fflush(stderr);
+
         FfxErrorCode code = ffxFsr2ContextCreate(privateData->context, &fsrContexDesc);
+
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkInitUpscaleContext: ffxFsr2ContextCreate returned %d\n", (int)code); fflush(stderr);
+
         if (code != FFX_OK)
         {
             if (desc->messageCallback)
@@ -55,13 +69,17 @@ extern "C"
                 desc->messageCallback(SR_MESSAGE_TYPE_ERROR, L"FSR2 Context init failed");
                 desc->messageCallback(SR_MESSAGE_TYPE_ERROR, std::to_wstring(code).c_str());
             }
+            fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkInitUpscaleContext: FAILED code=%d\n", (int)code); fflush(stderr);
             return (SRReturnCode)SR_RETURN_CODE_ERROR;
         }
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkInitUpscaleContext: Exit OK\n"); fflush(stderr);
         return (SRReturnCode)SR_RETURN_CODE_OK;
     }
 
     SR_API SRReturnCode srFfxFsr2VkCreateUpscaleContext(SRUpscaleContext *context, const SRCreateUpscaleContextDesc *desc)
     {
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: Enter\n"); fflush(stderr);
+
         if (desc->renderApiType != SR_RENDER_API_TYPE_VULKAN)
         {
             if (desc->messageCallback)
@@ -71,21 +89,42 @@ extern "C"
             return SR_RETURN_CODE_UNSUPPORTED_RENDER_API;
         }
 
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: device=%p physicalDevice=%p deviceProcAddr=%p\n",
+                (void*)desc->renderDeviceInfo.vulkan.device,
+                (void*)desc->renderDeviceInfo.vulkan.physicalDevice,
+                (void*)desc->renderDeviceInfo.vulkan.deviceProcAddr);
+        fflush(stderr);
+
         VkDeviceContext deviceContext = {
             (VkDevice)(desc->renderDeviceInfo.vulkan.device),
             (VkPhysicalDevice)(desc->renderDeviceInfo.vulkan.physicalDevice),
             (PFN_vkGetDeviceProcAddr)(desc->renderDeviceInfo.vulkan.deviceProcAddr),
         };
+
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: Calling ffxGetDeviceVK...\n"); fflush(stderr);
         FfxDevice device = ffxGetDeviceVK(&deviceContext);
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: ffxGetDeviceVK returned device=%p\n", (void*)device); fflush(stderr);
+
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: Calling ffxGetScratchMemorySizeVK...\n"); fflush(stderr);
         size_t scratchBufferSize = ffxGetScratchMemorySizeVK((VkPhysicalDevice)(desc->renderDeviceInfo.vulkan.physicalDevice), 1);
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: scratchBufferSize=%zu\n", scratchBufferSize); fflush(stderr);
+
         void *scratchBuffer = calloc(1, scratchBufferSize);
+        if (!scratchBuffer) {
+            fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: ERROR calloc failed\n"); fflush(stderr);
+            return (SRReturnCode)SR_RETURN_CODE_ERROR;
+        }
+
         FfxInterface *ffxInterface = new FfxInterface();
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: Calling ffxGetInterfaceVK...\n"); fflush(stderr);
         if (FfxErrorCode _rc = ffxGetInterfaceVK(ffxInterface, device, scratchBuffer, scratchBufferSize, 1); _rc != FFX_OK)
         {
+            fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: ERROR ffxGetInterfaceVK failed code=%d\n", (int)_rc); fflush(stderr);
             free(scratchBuffer);
             delete ffxInterface;
             return (SRReturnCode)SR_RETURN_CODE_ERROR;
         }
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: ffxGetInterfaceVK OK\n"); fflush(stderr);
 
         FfxFsr2Context *fsr2Context = new FfxFsr2Context();
 
@@ -96,6 +135,7 @@ extern "C"
 
         context->desc = *const_cast<SRCreateUpscaleContextDesc *>(desc);
         context->userContext = privateData;
+        fprintf(stderr, "[SRNative-FSR2VK] srFfxFsr2VkCreateUpscaleContext: Exit OK\n"); fflush(stderr);
         return (SRReturnCode)SR_RETURN_CODE_OK;
     }
 
